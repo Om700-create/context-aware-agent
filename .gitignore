@@ -1,0 +1,21 @@
+# Backend
+backend/venv/
+backend/app.db
+backend/chroma_data/
+backend/logs/
+backend/app/uploads/*
+!backend/app/uploads/.gitkeep
+__pycache__/
+*.pyc
+
+# Frontend
+frontend/node_modules/
+frontend/.next/
+frontend/out/
+
+# Env
+.env
+.env.local
+
+# OS
+.DS_Store

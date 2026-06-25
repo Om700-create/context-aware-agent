@@ -1,0 +1,31 @@
+version: "3.9"
+
+services:
+  backend:
+    build: ./backend
+    container_name: ai-platform-backend
+    ports:
+      - "8000:8000"
+    env_file:
+      - ./backend/.env
+    volumes:
+      - backend_uploads:/app/app/uploads
+      - backend_chroma:/app/chroma_data
+      - backend_db:/app/db_data
+    restart: unless-stopped
+
+  frontend:
+    build: ./frontend
+    container_name: ai-platform-frontend
+    ports:
+      - "3000:3000"
+    environment:
+      - NEXT_PUBLIC_API_BASE=http://localhost:8000/api
+    depends_on:
+      - backend
+    restart: unless-stopped
+
+volumes:
+  backend_uploads:
+  backend_chroma:
+  backend_db:
