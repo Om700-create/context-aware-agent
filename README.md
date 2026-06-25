@@ -1,198 +1,278 @@
-# ContextAI — Context-Aware Multi-Agent Conversational Platform
+# ContextAI — Context-Aware Conversational Agent
 
-A production-grade, multi-agent AI platform built with **FastAPI + LangGraph** (backend)
-and **Next.js 15 + TypeScript + Tailwind** (frontend). It does two things really well:
+> A full-stack conversational AI that answers questions from your documents **and** books appointments — powered entirely by a local Ollama LLM (no internet required).
 
-1. **Document Q&A** — upload a PDF, ask questions, get answers grounded only in the
-   document, with page-level citations and a confidence score.
-2. **Conversational appointment booking** — a stateful, multi-turn flow that collects
-   name / email / phone / date, validates each field, parses natural-language dates,
-   and remembers everything across the conversation (and across context switches back
-   and forth between booking and document Q&A).
-
-It is architected as a **Supervisor + specialist agents** system, orchestrated with
-LangGraph, not a single monolithic prompt.
+![Python](https://img.shields.io/badge/Python-3.11+-blue?logo=python) ![FastAPI](https://img.shields.io/badge/FastAPI-0.110+-green?logo=fastapi) ![LangGraph](https://img.shields.io/badge/LangGraph-0.1.x-orange) ![React](https://img.shields.io/badge/React-18-61DAFB?logo=react) ![Ollama](https://img.shields.io/badge/LLM-Ollama%20llama3.2%3A1b-black)
 
 ---
 
-## 1. Architecture
+## Features
 
-```
-Next.js Frontend  →  FastAPI Gateway  →  LangGraph Supervisor  →  Intent Router
-                                                                      │
-                                ┌─────────────────────────────────────┼─────────────────────┐
-                                │                 │                   │                     │
-                        Document Agent   Appointment Agent      Memory Agent        (Validation + Date
-                          (RAG/Chroma)    (booking state          (profile/         Agents are invoked
-                                            machine)              history)          synchronously by the
-                                                                                     Appointment Agent)
-                                │
-                          PostgreSQL/SQLite + ChromaDB
-```
+- **Document QA** — Upload `.txt` or `.pdf` files and ask questions; answers are grounded in your documents via RAG (FAISS + Ollama embeddings)
+- **Appointment Booking** — Conversational multi-step form that collects name, phone, email, and preferred date (supports natural language like *"next Monday"* or *"in 3 days"*)
+- **Context Switching** — Seamlessly switch between Document QA and Appointment Booking mid-conversation
+- **Fully Offline** — All LLM inference runs locally via Ollama; no API keys, no internet required
+- **Session Persistence** — Conversation state, booking progress, and document context are maintained throughout the session
 
-Full Mermaid diagrams (system architecture, LangGraph workflow, ER diagram, RAG
-pipeline, agent sequence) are in [`docs/diagrams.md`](docs/diagrams.md).
+---
 
-### Agents
+## Tech Stack
 
-| Agent | Responsibility |
+| Layer | Technology |
 |---|---|
-| **Supervisor** | Intent classification, context routing, agent selection |
-| **Document Agent** | PDF retrieval, hybrid semantic search, reranking, citation generation, confidence scoring |
-| **Appointment Agent** | Drives the `WAITING_NAME → WAITING_EMAIL → WAITING_PHONE → WAITING_DATE → CONFIRMATION → BOOKED` state machine |
-| **Validation Agent** | Name / email (RFC) / phone (international, via `phonenumbers`) validation with friendly error messages |
-| **Date Agent** | Converts "tomorrow", "next Monday", "coming Friday", "in 2 days" → `YYYY-MM-DD`, with confidence |
-| **Memory Agent** | Answers "what email did I provide earlier?", "what appointment did I book?", "when did we last talk?" from persisted profile/session/appointment history |
+| Frontend | React 18, Axios, react-markdown |
+| Backend | FastAPI, Uvicorn, Python 3.11+ |
+| Agent Orchestration | LangGraph 0.1.x |
+| LLM (chat) | Ollama · `llama3.2:1b` |
+| LLM (embeddings) | Ollama · `nomic-embed-text` |
+| Vector Store | FAISS (`faiss-cpu`) |
+| Document Loading | LangChain (`TextLoader`, `PyPDFLoader`) |
+| Validation | `python-dateutil`, custom regex |
+| Database | SQLite (`app.db`) |
 
 ---
 
-## 2. Tech Stack
+## Architecture
 
-**Backend:** FastAPI, LangGraph, SQLAlchemy + Alembic, SQLite (default) / PostgreSQL, ChromaDB, Pydantic v2, slowapi (rate limiting), loguru.
+```
+CLIENT LAYER  (React Frontend)
+      │  HTTP JSON  POST /chat · POST /upload-document
+      ▼
+API LAYER  (FastAPI · port 8000)
+      │
+      ▼
+AGENT LAYER  (LangGraph)
+      │
+      ├── route_intent
+      │       ├── Document QA Node  →  FAISS retrieval → Ollama → answer
+      │       └── Appointment Node  →  multi-step form → SQLite
+      │
+TOOLS LAYER
+      ├── FAISS Vector Store + RAG Pipeline
+      └── Validators: name · phone · email · parse_natural_date()
+      │
+INFRASTRUCTURE
+      └── Ollama (localhost:11434) · SQLite (app.db) · ./uploads
+```
 
-**Frontend:** Next.js 15 (App Router), TypeScript, Tailwind CSS, lucide-react.
-
-**AI / NLP:** Pluggable LLM client (`Ollama` qwen3:8b, any OpenAI-compatible API, or a deterministic **offline mode** so the whole platform is demoable with zero AI infra). PyMuPDF for PDF extraction, `dateparser` + a custom weekday resolver for date extraction, `phonenumbers` + `email-validator` for validation.
-
-> **Why offline mode exists:** the original spec assumes a local Ollama install. To
-> guarantee this runs out-of-the-box on *any* machine, the Document Agent falls back to
-> extractive answers (best-matching chunk) when no LLM is configured, and all other
-> agents (validation, date parsing, booking, memory) are already 100% deterministic —
-> they never depended on an LLM in the first place.
+See [`system_diagram.md`](./system_diagram.md) for the full architecture diagram.
 
 ---
 
-## 3. Project Structure
+## Prerequisites
+
+- Python **3.11+**
+- Node.js **18+**
+- [Ollama](https://ollama.com) installed and running
+
+---
+
+## Quick Start
+
+### 1. Pull Ollama Models
+
+```bash
+ollama pull llama3.2:1b
+ollama pull nomic-embed-text
+```
+
+Verify Ollama is running:
+```bash
+ollama serve   # starts on http://localhost:11434
+```
+
+### 2. Backend Setup
+
+```bash
+cd backend
+
+# Create and activate virtual environment
+python -m venv venv
+venv\Scripts\activate        # Windows
+# source venv/bin/activate   # macOS / Linux
+
+# Install dependencies
+pip install -r requirements.txt
+
+# Configure environment
+cp .env.example .env
+# Edit .env if needed (defaults work out of the box)
+
+# Run database migrations
+alembic upgrade head
+
+# Start the API server
+uvicorn app.main:app --reload --port 8000
+```
+
+Backend will be live at **http://localhost:8000**  
+Interactive API docs at **http://localhost:8000/docs**
+
+### 3. Frontend Setup
+
+```bash
+cd frontend
+
+# Install dependencies
+npm install
+
+# Configure environment
+cp .env.example .env.local
+# Set NEXT_PUBLIC_API_URL=http://localhost:8000
+
+# Start the dev server
+npm run dev
+```
+
+Frontend will be live at **http://localhost:3000**
+
+---
+
+## Environment Variables
+
+Copy `backend/.env.example` to `backend/.env`:
+
+```env
+LLM_PROVIDER=ollama
+OLLAMA_BASE_URL=http://localhost:11434
+OLLAMA_MODEL=llama3.2:1b
+DATABASE_URL=sqlite:///./app.db
+UPLOAD_DIR=./app/uploads
+MAX_UPLOAD_MB=25
+CORS_ORIGINS=http://localhost:3000,http://127.0.0.1:3000
+SECRET_KEY=change-me-in-production-please
+RATE_LIMIT=60/minute
+```
+
+---
+
+## API Reference
+
+| Endpoint | Method | Description |
+|---|---|---|
+| `/chat` | POST | Main agent entry point — handles both QA and booking |
+| `/upload-document` | POST | Upload and re-index a `.txt` or `.pdf` document |
+| `/documents` | GET | List all indexed documents |
+
+**POST /chat — Request body:**
+```json
+{
+  "message": "Book an appointment for next Monday",
+  "history": [],
+  "mode": "chat",
+  "appt_step": null,
+  "appt_data": {}
+}
+```
+
+**POST /chat — Response:**
+```json
+{
+  "response": "Sure! What's your name?",
+  "mode": "appointment",
+  "appt_step": "name",
+  "appt_data": {}
+}
+```
+
+---
+
+## How It Works
+
+### Document QA
+1. Upload a `.txt` or `.pdf` via the UI
+2. Document is chunked (size=500, overlap=50) and embedded with `nomic-embed-text`
+3. Embeddings are stored in a FAISS vector store (`./vectorstore`)
+4. On query, top-4 similar chunks are retrieved and passed to `llama3.2:1b` as context
+
+### Appointment Booking
+The agent walks through a validated multi-step form:
+
+```
+"book an appointment"
+        │
+        ▼
+Name  →  Phone  →  Email  →  Date  →  Confirm  →  Saved to SQLite
+```
+
+Natural language dates are supported:
+- *"next Monday"* → `2026-06-29`
+- *"in 3 days"* → `2026-06-28`
+- *"July 5"* → `2026-07-05`
+
+### Context Switching
+The `route_intent` node in LangGraph detects whether the user wants to query a document or book an appointment, and routes accordingly — mid-conversation switching is fully supported.
+
+---
+
+## Project Structure
 
 ```
 ai-platform/
 ├── backend/
 │   ├── app/
-│   │   ├── agents/         # supervisor, document, appointment, validation, date, memory
-│   │   ├── api/             # chat, documents, appointments, analytics routers
-│   │   ├── core/            # config, logging
-│   │   ├── db/               # SQLAlchemy models + session
-│   │   ├── schemas/         # Pydantic schemas
-│   │   ├── services/        # llm_client, embeddings, vector_store
-│   │   └── main.py
-│   ├── alembic/              # migrations
+│   │   ├── main.py              # FastAPI app + routes
+│   │   ├── agent/               # LangGraph graph definition
+│   │   ├── tools/               # Validators + RAG pipeline
+│   │   └── uploads/             # Uploaded documents
+│   ├── alembic/                 # DB migrations
+│   ├── .env.example
 │   ├── requirements.txt
-│   ├── Dockerfile
-│   └── .env.example
+│   └── Dockerfile
 ├── frontend/
-│   ├── app/                  # dashboard, chat, documents, appointments, analytics, settings
-│   ├── components/
-│   ├── lib/api.ts
-│   ├── Dockerfile
-│   └── .env.example
-├── docs/
-│   └── diagrams.md
-└── docker-compose.yml
+│   ├── app/                     # Next.js app directory
+│   ├── components/              # Chat UI components
+│   ├── .env.example
+│   └── Dockerfile
+├── docker-compose.yml
+├── system_diagram.md
+└── README.md
 ```
 
 ---
 
-## 4. Setup — Local (no Docker)
+## Docker (Optional)
 
-### Backend
-```bash
-cd backend
-python -m venv venv && source venv/bin/activate   # Windows: venv\Scripts\activate
-pip install -r requirements.txt
-cp .env.example .env
-alembic upgrade head
-uvicorn app.main:app --reload --port 8000
-```
-Backend is now live at `http://localhost:8000` (interactive docs at `/docs`).
+Run the full stack with Docker Compose:
 
-### Frontend
 ```bash
-cd frontend
-npm install
-cp .env.example .env.local
-npm run dev
+docker-compose up --build
 ```
-Frontend is now live at `http://localhost:3000`.
+
+> **Note:** Ollama must still be running on the host machine. The containers connect to `host.docker.internal:11434`.
 
 ---
 
-## 5. Setup — Docker
+## Constraints & Limits
 
-```bash
-cp backend/.env.example backend/.env
-docker compose up --build
-```
-- Backend: `http://localhost:8000`
-- Frontend: `http://localhost:3000`
-
----
-
-## 6. Environment Variables
-
-### `backend/.env`
-| Variable | Default | Notes |
-|---|---|---|
-| `DATABASE_URL` | `sqlite:///./app.db` | swap for `postgresql+psycopg2://user:pass@host/db` |
-| `CHROMA_PERSIST_DIR` | `./chroma_data` | local, file-based vector store |
-| `LLM_PROVIDER` | `offline` | `offline` \| `ollama` \| `openai` |
-| `OLLAMA_BASE_URL` / `OLLAMA_MODEL` | `http://localhost:11434` / `qwen3:8b` | used if `LLM_PROVIDER=ollama` |
-| `OPENAI_API_KEY` / `OPENAI_MODEL` | — | used if `LLM_PROVIDER=openai` |
-| `MAX_UPLOAD_MB` | `25` | PDF upload size limit |
-| `CORS_ORIGINS` | `http://localhost:3000` | comma-separated |
-
-### `frontend/.env.local`
-| Variable | Default |
+| Setting | Value |
 |---|---|
-| `NEXT_PUBLIC_API_BASE` | `http://localhost:8000/api` |
+| Max upload size | 25 MB |
+| API rate limit | 60 requests / minute |
+| CORS origins | `localhost:3000`, `127.0.0.1:3000` |
+| Supported file types | `.txt`, `.pdf` |
 
 ---
 
-## 7. API Reference
+## Built With
 
-| Method | Path | Description |
-|---|---|---|
-| `POST` | `/api/chat` | Main conversational endpoint — handles document Q&A, booking, and memory turns |
-| `POST` | `/api/documents/upload` | Upload + ingest a PDF (multipart/form-data, field `file`) |
-| `GET` | `/api/documents` | List uploaded documents |
-| `DELETE` | `/api/documents/{id}` | Delete a document and its vectors |
-| `POST` | `/api/appointments/create` | Direct (non-conversational) appointment creation, fully validated |
-| `GET` | `/api/appointments` | List all appointments |
-| `GET` | `/api/analytics` | Usage metrics (chats, appointments, users, documents, agent utilization, avg response time) |
-| `GET` | `/api/health` | Health check |
-
-Full OpenAPI docs are auto-generated at `http://localhost:8000/docs`.
+- [FastAPI](https://fastapi.tiangolo.com/)
+- [LangGraph](https://langchain-ai.github.io/langgraph/)
+- [LangChain](https://www.langchain.com/)
+- [Ollama](https://ollama.com/)
+- [FAISS](https://faiss.ai/)
+- [Next.js](https://nextjs.org/)
 
 ---
 
-## 8. Demo Script
+## Author
 
-1. Open `http://localhost:3000/documents`, upload a PDF (e.g. an employee handbook).
-2. Go to `/chat`, ask: **"What is the cancellation policy?"** → see the answer with page citation + confidence.
-3. Say: **"Book an appointment"** → Appointment Agent starts the state machine.
-4. Enter a name, then an **invalid email** → Validation Agent rejects it with a friendly message; enter a valid one.
-5. Enter a phone number, then say **"next Monday"** → Date Agent converts it to `YYYY-MM-DD`.
-6. Confirm with **"yes"** → appointment is persisted.
-7. Ask: **"What email did I provide earlier?"** → Memory Agent answers from profile.
-8. Ask: **"What appointment did I book?"** → Memory Agent answers from appointment history.
-9. Open `/analytics` to see live agent utilization and response-time metrics.
+**Narayan Bhandari**  
+Data Scientist · ML Engineer  
+[GitHub](https://github.com/Om700-create) · narayanbhandari498@gmail.com
 
 ---
 
-## 9. Troubleshooting
+## License
 
-- **`alembic upgrade head` fails with "table already exists"** — delete `app.db` and re-run, or just run the app once (it calls `Base.metadata.create_all` on startup as a safety net).
-- **Chroma telemetry warnings in logs** (`Failed to send telemetry event...`) — harmless; ChromaDB's anonymous telemetry call signature mismatch in this version. Does not affect functionality.
-- **Frontend can't reach backend** — check `NEXT_PUBLIC_API_BASE` and `CORS_ORIGINS` match your ports.
-- **Want real LLM answers instead of extractive offline mode** — install [Ollama](https://ollama.com), `ollama pull qwen3:8b`, set `LLM_PROVIDER=ollama` in `backend/.env`. Or set `LLM_PROVIDER=openai` + `OPENAI_API_KEY`.
-- **Date phrases not parsing** — the Date Agent has a built-in resolver for `tomorrow`, `today`, `in N days`, and `next/coming/this <weekday>` that runs before falling back to `dateparser`, since some `dateparser` versions mishandle "next Monday"-style phrasing.
-
----
-
-## 10. Security Notes
-
-- Uploads are restricted to PDF, size-capped, and written under a UUID-prefixed filename (no path traversal).
-- All chat/appointment input is validated via Pydantic schemas before reaching agents.
-- SQLAlchemy ORM (no raw SQL string interpolation) — no SQL injection surface.
-- Rate limiting is wired via `slowapi` (`RATE_LIMIT` env var).
-- CORS is explicitly allow-listed via `CORS_ORIGINS`.
-- Change `SECRET_KEY` before any real deployment.
+MIT License — feel free to use, modify, and distribute.

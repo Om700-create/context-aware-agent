@@ -19,3 +19,11 @@ frontend/out/
 
 # OS
 .DS_Store
+venv/
+node_modules/
+.env
+*.db
+chroma_data/
+logs/
+__pycache__/
+.next/
